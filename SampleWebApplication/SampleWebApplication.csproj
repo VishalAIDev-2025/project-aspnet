@@ -16,7 +16,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>SampleWebApplication</RootNamespace>
     <AssemblyName>SampleWebApplication</AssemblyName>
-    <TargetFrameworkVersion>net5.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>net8.0</TargetFrameworkVersion>
     <MvcBuildViews>false</MvcBuildViews>
     <UseIISExpress>true</UseIISExpress>
     <Use64BitIISExpress />
@@ -246,7 +246,7 @@
   <Target Name="AfterBuild">
   </Target> -->
   <PropertyGroup>
-    <TargetFrameworkVersion>net5.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>net8.0</TargetFrameworkVersion>
   </PropertyGroup>
 </Project>
 ```

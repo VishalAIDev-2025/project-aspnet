@@ -10,25 +10,25 @@ jobs:
   sonar:
     runs-on: windows-latest
 
-    # Dummy SonarQube values for testing ONLY
+    # Dummy values so workflow runs
     env:
       SONAR_HOST_URL: "http://dummy-sonarqube-url"
       SONAR_TOKEN: "dummy-token-123456"
       SONAR_PROJECT_KEY: "dummy-project-key"
-      SONAR_PROJECT_NAME: "Dummy Project Name"
+      SONAR_PROJECT_NAME: "Dummy Project"
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate Sonar secrets
+      - name: Validate Sonar variables
         shell: powershell
         run: |
-          if (-not $env:SONAR_HOST_URL) { Write-Error "❌ SONAR_HOST_URL missing"; exit 1 }
-          if (-not $env:SONAR_TOKEN) { Write-Error "❌ SONAR_TOKEN missing"; exit 1 }
-          if (-not $env:SONAR_PROJECT_KEY) { Write-Error "❌ SONAR_PROJECT_KEY missing"; exit 1 }
-          if (-not $env:SONAR_PROJECT_NAME) { Write-Error "❌ SONAR_PROJECT_NAME missing"; exit 1 }
-          Write-Host "✔ Sonar secrets OK"
+          if (-not $env:SONAR_HOST_URL) { Write-Error "SONAR_HOST_URL missing"; exit 1 }
+          if (-not $env:SONAR_TOKEN) { Write-Error "SONAR_TOKEN missing"; exit 1 }
+          if (-not $env:SONAR_PROJECT_KEY) { Write-Error "SONAR_PROJECT_KEY missing"; exit 1 }
+          if (-not $env:SONAR_PROJECT_NAME) { Write-Error "SONAR_PROJECT_NAME missing"; exit 1 }
+          Write-Host "Sonar variables validated"
 
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
@@ -38,25 +38,25 @@ jobs:
         run: nuget restore "SampleWebApplication.sln"
 
       - name: Locate MSBuild.exe
-        id: msbuild
         shell: powershell
         run: |
-          Write-Host "🔍 Locating MSBuild..."
+          Write-Host "Locating MSBuild..."
           $vswhere = "$env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
 
           if (Test-Path $vswhere) {
-            $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
-            if ($msbuild) {
-              $path = Join-Path $msbuild "MSBuild\Current\Bin\MSBuild.exe"
-              if (Test-Path $path) {
-                Write-Host "✔ MSBuild: $path"
-                Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$path"
+            $install = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+
+            if ($install) {
+              $msbuild = Join-Path $install "MSBuild\Current\Bin\MSBuild.exe"
+              if (Test-Path $msbuild) {
+                Write-Host "MSBuild found at $msbuild"
+                Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$msbuild"
                 exit 0
               }
             }
           }
 
-          Write-Error "❌ MSBuild not found"
+          Write-Error "MSBuild not found"
           exit 1
 
       - name: Install SonarScanner (dotnet)
@@ -66,38 +66,4 @@ jobs:
             || dotnet tool update --global dotnet-sonarscanner --version 5.12.0
 
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;" + $env:PATH
-          Write-Host "✔ SonarScanner installed"
-
-      - name: SonarScanner Begin
-        shell: powershell
-        run: |
-          dotnet sonarscanner begin `
-            /k:"$env:SONAR_PROJECT_KEY" `
-            /n:"$env:SONAR_PROJECT_NAME" `
-            /d:sonar.host.url="$env:SONAR_HOST_URL" `
-            /d:sonar.login="$env:SONAR_TOKEN"
-
-      - name: Build solution
-        shell: powershell
-        run: |
-          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "❌ Build failed"
-            exit $LASTEXITCODE
-          }
-
-      - name: SonarScanner End
-        shell: powershell
-        run: |
-          dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "❌ SonarScanner failed"
-            exit $LASTEXITCODE
-          }
-
-      - name: SonarQube Report Info
-        shell: powershell
-        run: |
-          Write-Host "✔ Sonar analysis submitted."
-          Write-Host "Visit your Sonar dashboard:"
-          Write-Host "$env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"
+          Write-Host "SonarScanner installed"

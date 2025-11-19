@@ -1,4 +1,4 @@
-name: SonarQube Code Analysis
+name: SonarCloud Code Analysis
 
 on:
   push:
@@ -9,121 +9,74 @@ on:
 jobs:
   sonar:
     runs-on: windows-latest
+
     env:
-      # Replace with secrets in production! Left here per your request.
       SONAR_HOST_URL: "https://sonarcloud.io"
-      SONAR_TOKEN: "25f0b32cdd9160d498bbaa922462f89275769c74"
       SONAR_PROJECT_KEY: "VishalAIDev-2025_project-aspnet"
       SONAR_PROJECT_NAME: "project-aspnet"
-      # <- IMPORTANT: set this to your SonarCloud organization key (usually lowercase)
-      SONAR_ORGANIZATION: "vishalaidev-2025"
 
     steps:
-      - name: Checkout code
+      # 1. Checkout source code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Setup NuGet
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
 
-      - name: Ensure MSBuild is available
-        id: setup-msbuild
+      # 3. Setup MSBuild
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
+        id: setup-msbuild
 
-      - name: Export MSBUILD_PATH (use action output or fallback to vswhere)
-        shell: powershell
-        run: |
-          $ms = '${{ steps.setup-msbuild.outputs.msbuild-path }}'
-          if (-not [string]::IsNullOrEmpty($ms)) {
-            Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $ms)
-            exit 0
-          }
-          Write-Host "Action did not return msbuild-path; trying vswhere fallback..."
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            $inst = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-            if ($inst) {
-              $candidate = Join-Path $inst "MSBuild\Current\Bin\MSBuild.exe"
-              if (-not (Test-Path $candidate)) {
-                $candidate = Get-ChildItem -Path (Join-Path $inst "MSBuild") -Recurse -Filter "MSBuild.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-              }
-              if ($candidate -and (Test-Path $candidate)) {
-                Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $candidate)
-                exit 0
-              } else {
-                Write-Error "vswhere found Visual Studio but no MSBuild.exe under it."
-                exit 1
-              }
-            } else {
-              Write-Error "vswhere did not find a Visual Studio installation with MSBuild."
-              exit 1
-            }
-          } else {
-            Write-Error "vswhere not found and setup-msbuild returned nothing. Cannot locate MSBuild."
-            exit 1
-          }
-
+      # 4. Restore NuGet Packages
       - name: Restore NuGet packages
         shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
-      - name: Install SonarScanner (dotnet-sonarscanner)
+      # 5. Install SonarScanner for .NET
+      - name: Install SonarScanner
         shell: powershell
         run: |
-          Write-Host "Installing dotnet-sonarscanner global tool (or updating if already installed)..."
-          dotnet tool install --global dotnet-sonarscanner --version 5.12.0
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Install failed (exit code $LASTEXITCODE). Attempting update..."
-            dotnet tool update --global dotnet-sonarscanner --version 5.12.0
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "Both install and update of dotnet-sonarscanner failed (exit code $LASTEXITCODE)."
-              exit $LASTEXITCODE
-            }
+          try {
+            dotnet tool install --global dotnet-sonarscanner --version 5.12.0 -ErrorAction Stop
+          } catch {
+            dotnet tool update --global dotnet-sonarscanner --version 5.12.0 -ErrorAction Stop
           }
+
+          # Add dotnet tools path
           $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
           Add-Content -Path $env:GITHUB_ENV -Value ("PATH=" + $dotnetTools + ";" + $env:PATH)
 
+      # 6. Begin SonarCloud analysis
       - name: SonarScanner Begin
         shell: powershell
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          if (-not $env:SONAR_TOKEN -or -not $env:SONAR_HOST_URL -or -not $env:SONAR_PROJECT_KEY -or -not $env:SONAR_PROJECT_NAME -or -not $env:SONAR_ORGANIZATION) {
-            Write-Error "One or more Sonar environment variables are missing. Please set SONAR_HOST_URL, SONAR_TOKEN, SONAR_PROJECT_KEY, SONAR_PROJECT_NAME, SONAR_ORGANIZATION."
-            exit 1
-          }
-          Write-Host "Starting Sonar analysis (begin)..."
           dotnet sonarscanner begin `
             /k:"$env:SONAR_PROJECT_KEY" `
             /n:"$env:SONAR_PROJECT_NAME" `
-            /o:"$env:SONAR_ORGANIZATION" `
+            /o:"vishalaidev-2025" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
             /d:sonar.login="$env:SONAR_TOKEN"
-          if ($LASTEXITCODE -ne 0) { Write-Error "SonarScanner begin failed."; exit $LASTEXITCODE }
 
+      # 7. Build the solution in Release mode
       - name: Build solution
         shell: powershell
         run: |
-          if (-not $env:MSBUILD_PATH) {
-            Write-Error "MSBUILD_PATH not set; locate step failed."
-            exit 1
-          }
-          Write-Host "Building solution using MSBuild: $env:MSBUILD_PATH"
-          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release /m /p:VisualStudioVersion=16.0
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Build failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
-          }
+          & "${{ steps.setup-msbuild.outputs.msbuild-path }}" "SampleWebApplication.sln" /p:Configuration=Release
 
+      # 8. End SonarCloud analysis
       - name: SonarScanner End
         shell: powershell
-        run: |
-          Write-Host "Ending Sonar analysis (end)..."
-          dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "SonarScanner end failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
-          }
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
 
-      - name: Show Sonar URL
+      # 9. Show SonarCloud dashboard URL
+      - name: Show SonarCloud URL
         shell: powershell
         run: |
-          Write-Host "SonarCloud Dashboard:"
-          Write-Host "https://sonarcloud.io/project/overview?id=$env:SONAR_PROJECT_KEY"
+          Write-Host "SonarCloud Dashboard Link:"
+          Write-Host "https://sonarcloud.io/project/overview?id=VishalAIDev-2025_project-aspnet"

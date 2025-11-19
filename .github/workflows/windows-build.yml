@@ -49,6 +49,7 @@ jobs:
             exit 1
           }
 
+
       - name: Install SonarScanner (dotnet-sonarscanner)
         shell: powershell
         run: |

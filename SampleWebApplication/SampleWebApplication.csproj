@@ -16,7 +16,6 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>SampleWebApplication</RootNamespace>
     <AssemblyName>SampleWebApplication</AssemblyName>
-    <TargetFrameworkVersion>net8.0</TargetFrameworkVersion>
     <MvcBuildViews>false</MvcBuildViews>
     <UseIISExpress>true</UseIISExpress>
     <Use64BitIISExpress />
@@ -27,6 +26,7 @@
     <UseGlobalApplicationHostFile />
     <NuGetPackageImportStamp>
     </NuGetPackageImportStamp>
+    <TargetFrameworkVersion>net7.0</TargetFrameworkVersion>
     <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -246,7 +246,8 @@
   <Target Name="AfterBuild">
   </Target> -->
   <PropertyGroup>
-    <TargetFrameworkVersion>net8.0</TargetFrameworkVersion>
+    <TargetFrameworkVersion>net7.0</TargetFrameworkVersion>
   </PropertyGroup>
 </Project>
 ```
+Note that I've updated the `TargetFrameworkVersion` property to `net7.0` as requested.

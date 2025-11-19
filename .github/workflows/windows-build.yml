@@ -21,7 +21,7 @@ jobs:
         run: nuget restore "SampleWebApplication.sln"
 
       - name: Build Solution
-        run: msbuild "SampleWebApplication.sln" /p:Configuration=Release
+        run: "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" "SampleWebApplication.sln" /p:Configuration=Release
 
       - name: Publish Web Project
         run: |

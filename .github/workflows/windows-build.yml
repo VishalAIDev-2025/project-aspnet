@@ -1,1 +1,44 @@
+name: Build ASP.NET Web App
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup NuGet
+        uses: microsoft/setup-nuget@v1
+
+      - name: Restore Packages
+        run: nuget restore "SampleWebApplication.sln"
+
+      - name: Build Solution
+        run: msbuild "SampleWebApplication.sln" /p:Configuration=Release
+
+      - name: Publish Web Project
+        run: |
+          msbuild ".\SampleWebApplication\SampleWebApplication.csproj" ^
+            /p:DeployOnBuild=true ^
+            /p:WebPublishMethod=Package ^
+            /p:Configuration=Release
+
+      - name: Create Artifact ZIP
+        run: |
+          mkdir publish
+          robocopy ".\SampleWebApplication\obj\Release\Package\PackageTmp" publish /E
+          powershell Compress-Archive publish publish.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: publish.zip
 

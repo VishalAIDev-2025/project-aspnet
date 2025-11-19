@@ -1,4 +1,4 @@
-name: SonarCloud Code Analysis
+name: SonarQube Code Analysis
 
 on:
   push:
@@ -9,74 +9,45 @@ on:
 jobs:
   sonar:
     runs-on: windows-latest
-
     env:
+      # NOTE: for production, move SONAR_TOKEN into repo secrets and reference via ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: "https://sonarcloud.io"
+      SONAR_TOKEN: "25f0b32cdd9160d498bbaa922462f89275769c74"
       SONAR_PROJECT_KEY: "VishalAIDev-2025_project-aspnet"
       SONAR_PROJECT_NAME: "project-aspnet"
+      SONAR_ORGANIZATION: "vishalaidev-2025"
 
     steps:
-      # 1. Checkout source code
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Setup NuGet
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
 
-      # 3. Setup MSBuild
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v1
+      - name: Ensure MSBuild is available
         id: setup-msbuild
+        uses: microsoft/setup-msbuild@v1
 
-      # 4. Restore NuGet Packages
-      - name: Restore NuGet packages
-        shell: powershell
-        run: nuget restore "SampleWebApplication.sln"
-
-      # 5. Install SonarScanner for .NET
-      - name: Install SonarScanner
+      - name: Export MSBUILD_PATH (action output or vswhere fallback)
         shell: powershell
         run: |
-          try {
-            dotnet tool install --global dotnet-sonarscanner --version 5.12.0 -ErrorAction Stop
-          } catch {
-            dotnet tool update --global dotnet-sonarscanner --version 5.12.0 -ErrorAction Stop
+          # Try action output first
+          $ms = '${{ steps.setup-msbuild.outputs.msbuild-path }}'
+          if (-not [string]::IsNullOrEmpty($ms)) {
+            Write-Host "Using msbuild path from action output: $ms"
+            Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $ms)
+            exit 0
           }
 
-          # Add dotnet tools path
-          $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
-          Add-Content -Path $env:GITHUB_ENV -Value ("PATH=" + $dotnetTools + ";" + $env:PATH)
-
-      # 6. Begin SonarCloud analysis
-      - name: SonarScanner Begin
-        shell: powershell
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          dotnet sonarscanner begin `
-            /k:"$env:SONAR_PROJECT_KEY" `
-            /n:"$env:SONAR_PROJECT_NAME" `
-            /o:"vishalaidev-2025" `
-            /d:sonar.host.url="$env:SONAR_HOST_URL" `
-            /d:sonar.login="$env:SONAR_TOKEN"
-
-      # 7. Build the solution in Release mode
-      - name: Build solution
-        shell: powershell
-        run: |
-          & "${{ steps.setup-msbuild.outputs.msbuild-path }}" "SampleWebApplication.sln" /p:Configuration=Release
-
-      # 8. End SonarCloud analysis
-      - name: SonarScanner End
-        shell: powershell
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
-
-      # 9. Show SonarCloud dashboard URL
-      - name: Show SonarCloud URL
-        shell: powershell
-        run: |
-          Write-Host "SonarCloud Dashboard Link:"
-          Write-Host "https://sonarcloud.io/project/overview?id=VishalAIDev-2025_project-aspnet"
+          Write-Host "setup-msbuild did not return msbuild-path; trying vswhere fallback..."
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $inst = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+            if ($inst) {
+              $candidate = Join-Path $inst "MSBuild\Current\Bin\MSBuild.exe"
+              if (-not (Test-Path $candidate)) {
+                $candidate = Get-ChildItem -Path (Join-Path $inst "MSBuild") -Recurse -Filter "MSBuild.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+              }
+              if ($candidate -and (Test-Path $candidate)) {
+                Write-Host "Found MSBuild via vswhere: $candidate"
+                Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $ca

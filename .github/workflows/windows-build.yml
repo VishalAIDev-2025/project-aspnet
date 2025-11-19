@@ -1,0 +1,61 @@
+name: SonarCloud Analysis
+
+on:
+  push:
+    branches: [ "main_v2" ]
+  pull_request:
+    branches: [ "main_v2" ]
+
+jobs:
+  sonar:
+    runs-on: windows-latest
+
+    env:
+      SONAR_HOST_URL: "https://sonarcloud.io"
+      SONAR_TOKEN: "25f0b32cdd9160d498bbaa922462f89275769c74"
+      SONAR_PROJECT_KEY: "VishalAIDev-2025_project-aspnet"
+      SONAR_PROJECT_NAME: "project-aspnet"
+      MSBUILD_PATH: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\MSBuild\\Current\\Bin\\MSBuild.exe"
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Setup NuGet
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v1
+
+      # 3. Restore packages
+      - name: Restore NuGet packages
+        shell: powershell
+        run: nuget restore "SampleWebApplication.sln"
+
+      # 4. Install SonarScanner
+      - name: Install SonarScanner
+        shell: powershell
+        run: |
+          dotnet tool install --global dotnet-sonarscanner --version 5.12.0
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
+
+      # 5. SonarScanner Begin
+      - name: SonarScanner Begin
+        shell: powershell
+        run: |
+          dotnet sonarscanner begin `
+            /k:"$env:SONAR_PROJECT_KEY" `
+            /n:"$env:SONAR_PROJECT_NAME" `
+            /o:"vishalaidev-2025" `
+            /d:sonar.host.url="$env:SONAR_HOST_URL" `
+            /d:sonar.login="$env:SONAR_TOKEN"
+
+      # 6. Build Solution (Fixed — using static MSBuild path)
+      - name: Build Solution
+        shell: powershell
+        run: |
+          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
+
+      # 7. SonarScanner End
+      - name: SonarScanner End
+        shell: powershell
+        run: dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"

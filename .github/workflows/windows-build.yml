@@ -21,51 +21,99 @@ jobs:
         shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
+      #
+      # FUNCTION: Find MSBuild automatically using vswhere or fallback paths
+      #
+      - name: Locate MSBuild
+        id: msbuild
+        shell: powershell
+        run: |
+          Write-Host "🔍 Locating MSBuild..."
+
+          $vswhere = "$env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuildPath = $null
+
+          if (Test-Path $vswhere) {
+            Write-Host "Using vswhere to locate MSBuild..."
+            $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+            if ($installPath) {
+              $candidate = Join-Path $installPath "MSBuild\Current\Bin\MSBuild.exe"
+              if (Test-Path $candidate) { $msbuildPath = $candidate }
+            }
+          }
+
+          if (-not $msbuildPath) {
+            Write-Host "vswhere failed — trying fallback paths..."
+            $fallbacks = @(
+              "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+              "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+              "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
+              "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+              "C:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe"
+            )
+
+            foreach ($path in $fallbacks) {
+              if (Test-Path $path) { $msbuildPath = $path; break }
+            }
+          }
+
+          if (-not $msbuildPath) {
+            Write-Error "❌ MSBuild not found on this runner."
+            exit 1
+          }
+
+          Write-Host "✅ MSBuild found at: $msbuildPath"
+
+          # Output path for other steps
+          echo "MSBUILD_PATH=$msbuildPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      #
+      # BUILD SOLUTION
+      #
       - name: Build Solution
         shell: powershell
         run: |
-          $msbuild = "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-          if (!(Test-Path $msbuild)) {
-            Write-Error "MSBuild not found at $msbuild"
-            exit 1
-          }
-          & $msbuild "SampleWebApplication.sln" /p:Configuration=Release
+          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
 
+      #
+      # PUBLISH WEB PROJECT (CREATE PACKAGE)
+      #
       - name: Publish Web Project
         shell: powershell
         run: |
-          $msbuild = "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-          if (!(Test-Path $msbuild)) {
-            Write-Error "MSBuild not found at $msbuild"
-            exit 1
-          }
-          & $msbuild ".\SampleWebApplication\SampleWebApplication.csproj" `
+          & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" `
             /p:Configuration=Release `
             /p:DeployOnBuild=true `
             /p:WebPublishMethod=Package `
             /p:PackageAsSingleFile=false `
             /p:SkipInvalidConfigurations=true
 
+      #
+      # CREATE ZIP ARTIFACT
+      #
       - name: Create Artifact ZIP
         shell: powershell
         run: |
-          $publishPath = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
+          $publishSrc = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
 
-          if (!(Test-Path $publishPath)) {
-            Write-Host "❌ Publish folder not found. Check project path."
+          if (!(Test-Path $publishSrc)) {
+            Write-Host "❌ Publish folder not found: $publishSrc"
             exit 1
           }
 
           if (Test-Path "publish") { Remove-Item "publish" -Recurse -Force }
           New-Item -ItemType Directory -Path publish | Out-Null
 
-          robocopy $publishPath publish /E | Out-Null
+          robocopy $publishSrc publish /E | Out-Null
 
-          if (Test-Path "publish.zip") { Remove-Item "publish.zip" -Force }
-          Compress-Archive -Path (Join-Path (Get-Item publish).FullName '*') -DestinationPath publish.zip
+          if (Test-Path "publish.zip") { Remove-Item "publish.zip" }
+          Compress-Archive -Path publish/* -DestinationPath publish.zip
 
           Write-Host "✅ publish.zip created successfully"
 
+      #
+      # UPLOAD ARTIFACT
+      #
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:

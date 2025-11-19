@@ -83,11 +83,11 @@ jobs:
           }
           Write-Host "dotnet-sonarscanner is available."
 
-      - name: SonarScanner Begin
-        shell: powershell
-        run: |
-          Write-Host "Starting Sonar analysis (begin)..."
-          dotnet sonarscanner begin /k:"$env:SONAR_PROJECT_KEY" /n:"$env:SONAR_PROJECT_NAME" /d:sonar.host.url="$env:SONAR_HOST_URL" /d:sonar.login="$env:SONAR_TOKEN"
+#      - name: SonarScanner Begin
+#        shell: powershell
+#        run: |
+#          Write-Host "Starting Sonar analysis (begin)..."
+#          dotnet sonarscanner begin /k:"$env:SONAR_PROJECT_KEY" /n:"$env:SONAR_PROJECT_NAME" /d:sonar.host.url="$env:SONAR_HOST_URL" /d:sonar.login="$env:SONAR_TOKEN"
       
       - name: Build solution
         shell: powershell

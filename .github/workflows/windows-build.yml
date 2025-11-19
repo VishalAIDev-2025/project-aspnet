@@ -21,24 +21,43 @@ jobs:
         run: nuget restore "SampleWebApplication.sln"
 
       - name: Build Solution
-        run: "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" "SampleWebApplication.sln" /p:Configuration=Release
+        run: >
+          "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+          "SampleWebApplication.sln"
+          /p:Configuration=Release
 
       - name: Publish Web Project
-        run: |
-          msbuild ".\SampleWebApplication\SampleWebApplication.csproj" ^
-            /p:DeployOnBuild=true ^
-            /p:WebPublishMethod=Package ^
-            /p:Configuration=Release
+        run: >
+          "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+          ".\SampleWebApplication\SampleWebApplication.csproj"
+          /p:Configuration=Release
+          /p:DeployOnBuild=true
+          /p:WebPublishMethod=Package
+          /p:PackageAsSingleFile=false
+          /p:SkipInvalidConfigurations=true
 
       - name: Create Artifact ZIP
+        shell: powershell
         run: |
-          mkdir publish
-          robocopy ".\SampleWebApplication\obj\Release\Package\PackageTmp" publish /E
-          powershell Compress-Archive publish publish.zip
+          $publishPath = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
+          
+          if (!(Test-Path $publishPath)) {
+            Write-Host "❌ Publish folder not found. Check project path."
+            exit 1
+          }
+
+          if (Test-Path "publish") { Remove-Item "publish" -Recurse -Force }
+          New-Item -ItemType Directory -Path publish | Out-Null
+
+          robocopy $publishPath publish /E | Out-Null
+
+          if (Test-Path "publish.zip") { Remove-Item "publish.zip" }
+          Compress-Archive -Path publish/* -DestinationPath publish.zip
+
+          Write-Host "✅ publish.zip created successfully"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: publish.zip
-

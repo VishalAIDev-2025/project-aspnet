@@ -1,4 +1,4 @@
-name: Build ASP.NET Web App
+name: SonarQube Code Analysis
 
 on:
   push:
@@ -7,158 +7,95 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  sonar:
     runs-on: windows-latest
 
+    env:
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+      SONAR_PROJECT_NAME: ${{ secrets.SONAR_PROJECT_NAME }}
+
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Validate Sonar secrets
+        shell: powershell
+        run: |
+          if (-not $env:SONAR_HOST_URL) { Write-Error "❌ SONAR_HOST_URL missing"; exit 1 }
+          if (-not $env:SONAR_TOKEN) { Write-Error "❌ SONAR_TOKEN missing"; exit 1 }
+          if (-not $env:SONAR_PROJECT_KEY) { Write-Error "❌ SONAR_PROJECT_KEY missing"; exit 1 }
+          if (-not $env:SONAR_PROJECT_NAME) { Write-Error "❌ SONAR_PROJECT_NAME missing"; exit 1 }
+          Write-Host "✔ Sonar secrets OK"
 
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
 
-      - name: Restore Packages
+      - name: Restore NuGet packages
         shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
-      - name: Locate MSBuild
-        id: locate-msbuild
+      - name: Locate MSBuild.exe
+        id: msbuild
         shell: powershell
         run: |
-          Write-Host "Locating MSBuild..."
-          $msbuild = $null
-          $vswherePath = Join-Path $env:ProgramFiles 'Microsoft Visual Studio\Installer\vswhere.exe'
-          if (Test-Path $vswherePath) {
-            try {
-              $installPath = & $vswherePath -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
-              if ($installPath) {
-                $candidate = Join-Path $installPath 'MSBuild\Current\Bin\MSBuild.exe'
-                if (Test-Path $candidate) { $msbuild = $candidate }
-              }
-            } catch { Write-Host "vswhere invocation failed or returned nothing." }
-          }
-          if (-not $msbuild) {
-            $searchRoots = @(
-              'C:\Program Files\Microsoft Visual Studio',
-              'C:\Program Files (x86)\Microsoft Visual Studio',
-              'C:\Program Files (x86)\MSBuild',
-              'C:\Program Files\Microsoft Visual Studio\2022'
-            )
-            foreach ($root in $searchRoots) {
-              if (Test-Path $root) {
-                try {
-                  $found = Get-ChildItem -Path $root -Filter MSBuild.exe -Recurse -ErrorAction SilentlyContinue -Force | Select-Object -First 1
-                  if ($found -and $found.FullName) { $msbuild = $found.FullName; break }
-                } catch { Write-Host "Search under $root failed or was skipped." }
-              }
-            }
-          }
-          if (-not $msbuild) {
-            $fallbacks = @(
-              'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe',
-              'C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe',
-              'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe',
-              'C:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe'
-            )
-            foreach ($f in $fallbacks) { if (Test-Path $f) { $msbuild = $f; break } }
-          }
-          if (-not $msbuild) {
-            Write-Host "ERROR: MSBuild.exe not found on this runner."
-            if (Test-Path 'C:\Program Files\Microsoft Visual Studio') {
-              Get-ChildItem 'C:\Program Files\Microsoft Visual Studio' -Force | ForEach-Object { Write-Host $_.FullName }
-            } else {
-              Write-Host "C:\Program Files\Microsoft Visual Studio does not exist on this runner."
-            }
-            exit 1
-          }
-          Write-Host "MSBuild found at: $msbuild"
-          Add-Content -Path $env:GITHUB_ENV -Value ('MSBUILD_PATH=' + $msbuild)
+          Write-Host "🔍 Locating MSBuild..."
+          $vswhere = "$env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
 
-      - name: Build Solution
+          if (Test-Path $vswhere) {
+            $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+            if ($msbuild) {
+              $path = Join-Path $msbuild "MSBuild\Current\Bin\MSBuild.exe"
+              if (Test-Path $path) {
+                Write-Host "✔ MSBuild: $path"
+                Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$path"
+                exit 0
+              }
+            }
+          }
+
+          Write-Error "❌ MSBuild not found"
+          exit 1
+
+      - name: Install SonarScanner (dotnet)
         shell: powershell
         run: |
-          Write-Host "Building solution..."
+          dotnet tool install --global dotnet-sonarscanner --version 5.12.0 `
+            || dotnet tool update --global dotnet-sonarscanner --version 5.12.0
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;" + $env:PATH
+          Write-Host "✔ SonarScanner installed"
+
+      - name: SonarScanner Begin
+        shell: powershell
+        run: |
+          dotnet sonarscanner begin `
+            /k:"$env:SONAR_PROJECT_KEY" `
+            /n:"$env:SONAR_PROJECT_NAME" `
+            /d:sonar.host.url="$env:SONAR_HOST_URL" `
+            /d:sonar.login="$env:SONAR_TOKEN"
+
+      - name: Build solution
+        shell: powershell
+        run: |
           & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
-
-      - name: Try Package Publish (creates PackageTmp)
-        shell: powershell
-        run: |
-          Write-Host "Attempting MSBuild Package publish (PackageTmp)..."
-          & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=false /p:SkipInvalidConfigurations=true
-          Write-Host "Package publish step finished. (Check logs above for errors/warnings.)"
-
-      - name: Ensure publish output (fallback to FileSystem publish if PackageTmp missing)
-        shell: powershell
-        run: |
-          function Run-Robocopy {
-            param($src, $dst)
-            Write-Host "Robocopy $src -> $dst"
-            robocopy $src $dst /E | Out-Null
-            $rc = $LASTEXITCODE
-            Write-Host "robocopy exit code: $rc"
-            # robocopy codes: 0..7 = success/warning, >=8 = failure
-            if ($rc -ge 8) {
-              Write-Host "robocopy reported a fatal error (exit code $rc)."
-              exit $rc
-            } else {
-              Write-Host "robocopy completed (acceptable exit code $rc)."
-            }
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "❌ Build failed"
+            exit $LASTEXITCODE
           }
 
-          $packageTmp = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
-          $publishDir = "publish"
-
-          if (Test-Path $packageTmp) {
-            Write-Host "Found PackageTmp at $packageTmp - using it as publish source."
-            if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-            New-Item -ItemType Directory -Path $publishDir | Out-Null
-            Run-Robocopy $packageTmp $publishDir
-          } else {
-            Write-Host "PackageTmp not found. Attempting FileSystem publish directly to '$publishDir' using MSBuild..."
-            if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
-            # Try FileSystem publish
-            & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:publishUrl=$publishDir /p:SkipInvalidConfigurations=true
-
-            if (Test-Path $publishDir) {
-              Write-Host "FileSystem publish succeeded; publish folder created at $publishDir"
-            } else {
-              Write-Host "FileSystem publish did not create $publishDir. Falling back to copying bin and content if available..."
-              $binDir = ".\SampleWebApplication\bin\Release"
-              if (Test-Path $binDir) {
-                New-Item -ItemType Directory -Path $publishDir | Out-Null
-                Run-Robocopy $binDir (Join-Path $publishDir "bin")
-              }
-              $commonFolders = @("Views","Content","Scripts","assets","App_Data","fonts")
-              foreach ($f in $commonFolders) {
-                $src = Join-Path ".\SampleWebApplication" $f
-                if (Test-Path $src) {
-                  Run-Robocopy $src (Join-Path $publishDir $f)
-                }
-              }
-            }
-          }
-
-          # Final check
-          if (!(Test-Path $publishDir) -or ((Get-ChildItem $publishDir -Recurse | Measure-Object).Count -eq 0)) {
-            Write-Host "ERROR: No publish output found after all attempts."
-            Write-Host "Debug listing of SampleWebApplication folders (depth 2):"
-            Get-ChildItem ".\SampleWebApplication" -Force -Recurse -Depth 2 | ForEach-Object { Write-Host $_.FullName }
-            exit 1
-          } else {
-            Write-Host "Publish files ready in folder: $publishDir"
-            Get-ChildItem $publishDir -Recurse | Select-Object FullName, Length | ForEach-Object { Write-Host $_.FullName }
-          }
-
-      - name: Create Artifact ZIP
+      - name: SonarScanner End
         shell: powershell
         run: |
-          if (Test-Path "publish.zip") { Remove-Item "publish.zip" -Force }
-          # Force overwrite if exists
-          Compress-Archive -Path (Join-Path (Get-Item publish).FullName '*') -DestinationPath publish.zip -Force
-          Write-Host "publish.zip created."
+          dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "❌ SonarScanner failed"
+            exit $LASTEXITCODE
+          }
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: publish.zip
+      - name: SonarQube Report Info
+        shell: powershell
+        run: |
+          Write-Host "✔ Sonar analysis submitted."
+          Write-Host "Visit your Sonar dashboard:"
+          Write-Host "$env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"

@@ -29,19 +29,117 @@ jobs:
 
           $msbuild = $null
 
-          # Method 1 — Try using vswhere
-          $vswhere = "$env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
-            if ($installPath) {
-              $candidate = Join-Path $installPath "MSBuild\Current\Bin\MSBuild.exe"
-              if (Test-Path $candidate) { $msbuild = $candidate }
+          # 1) Try vswhere if present
+          $vswherePath = Join-Path $env:ProgramFiles 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (Test-Path $vswherePath) {
+            Write-Host "vswhere found at $vswherePath - attempting to locate Visual Studio installation..."
+            try {
+              $installPath = & $vswherePath -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
+              if ($installPath) {
+                $candidate = Join-Path $installPath 'MSBuild\Current\Bin\MSBuild.exe'
+                if (Test-Path $candidate) { $msbuild = $candidate }
+              }
+            } catch {
+              Write-Host "vswhere invocation failed or returned nothing."
+            }
+          } else {
+            Write-Host "vswhere not present on runner."
+          }
+
+          # 2) If not found, search common directories for MSBuild.exe (recursively)
+          if (-not $msbuild) {
+            $searchRoots = @(
+              'C:\Program Files\Microsoft Visual Studio',
+              'C:\Program Files (x86)\Microsoft Visual Studio',
+              'C:\Program Files (x86)\MSBuild',
+              'C:\Program Files\Microsoft Visual Studio\2022'
+            )
+            foreach ($root in $searchRoots) {
+              if (Test-Path $root) {
+                Write-Host "Searching under $root for MSBuild.exe (this may take a few seconds)..."
+                try {
+                  $found = Get-ChildItem -Path $root -Filter MSBuild.exe -Recurse -ErrorAction SilentlyContinue -Force | Select-Object -First 1
+                  if ($found -and $found.FullName) {
+                    $msbuild = $found.FullName
+                    break
+                  }
+                } catch {
+                  Write-Host "Search under $root failed or was skipped."
+                }
+              } else {
+                Write-Host "Path not present: $root"
+              }
             }
           }
 
-          # Method 2 — Fallback MSBuild locations
+          # 3) Final fallback: check a few very common specific locations
           if (-not $msbuild) {
             $fallbacks = @(
-              "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-              "C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-              "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current
+              'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe',
+              'C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe',
+              'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe',
+              'C:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe'
+            )
+            foreach ($f in $fallbacks) {
+              if (Test-Path $f) { $msbuild = $f; break }
+            }
+          }
+
+          # If still not found, show helpful debug info and fail
+          if (-not $msbuild) {
+            Write-Host "ERROR: MSBuild.exe not found on this runner."
+            Write-Host "Debug: listing top-level Visual Studio folders (if present):"
+            if (Test-Path 'C:\Program Files\Microsoft Visual Studio') {
+              Get-ChildItem 'C:\Program Files\Microsoft Visual Studio' -Force | ForEach-Object { Write-Host $_.FullName }
+            } else {
+              Write-Host "C:\Program Files\Microsoft Visual Studio does not exist on this runner."
+            }
+            Write-Host "You can switch to a self-hosted runner with Visual Studio installed or use a different hosted image."
+            exit 1
+          }
+
+          Write-Host "MSBuild found at: $msbuild"
+
+          # Export to GITHUB_ENV safely (no fragile quoting)
+          Add-Content -Path $env:GITHUB_ENV -Value ('MSBUILD_PATH=' + $msbuild)
+
+      - name: Build Solution
+        shell: powershell
+        run: |
+          if (-not $env:MSBUILD_PATH) {
+            Write-Host "MSBUILD_PATH is not set - aborting."
+            exit 1
+          }
+          Write-Host "Building solution with: $env:MSBUILD_PATH"
+          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
+
+      - name: Publish Web Project
+        shell: powershell
+        run: |
+          Write-Host "Publishing web project..."
+          & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=false /p:SkipInvalidConfigurations=true
+
+      - name: Create Artifact ZIP
+        shell: powershell
+        run: |
+          $publishSrc = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
+          if (!(Test-Path $publishSrc)) {
+            Write-Host "Publish output not found at $publishSrc. Build/publish may have failed."
+            exit 1
+          }
+
+          if (Test-Path "publish") { Remove-Item "publish" -Recurse -Force }
+          New-Item -ItemType Directory -Path publish | Out-Null
+
+          robocopy $publishSrc publish /E | Out-Null
+
+          if (Test-Path "publish.zip") { Remove-Item "publish.zip" -Force }
+          Compress-Archive -Path (Join-Path (Get-Item publish).FullName '*') -DestinationPath publish.zip
+
+          Write-Host "publish.zip created successfully"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: publish.zip

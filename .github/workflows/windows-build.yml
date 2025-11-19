@@ -10,6 +10,7 @@ jobs:
   sonar:
     runs-on: windows-latest
 
+    # Dummy values for testing — replace with secrets for real runs
     env:
       SONAR_HOST_URL: "http://dummy-sonarqube-url"
       SONAR_TOKEN: "dummy-token-123456"
@@ -27,7 +28,7 @@ jobs:
           if (-not $env:SONAR_TOKEN) { Write-Error "SONAR_TOKEN missing"; exit 1 }
           if (-not $env:SONAR_PROJECT_KEY) { Write-Error "SONAR_PROJECT_KEY missing"; exit 1 }
           if (-not $env:SONAR_PROJECT_NAME) { Write-Error "SONAR_PROJECT_NAME missing"; exit 1 }
-          Write-Host "Sonar variables are valid."
+          Write-Host "Sonar variables validated"
 
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
@@ -36,55 +37,68 @@ jobs:
         shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
-      - name: Locate MSBuild.exe
+      - name: Locate MSBuild.exe (use .NET Framework MSBuild)
         shell: powershell
         run: |
           $msbuild = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
-
           if (Test-Path $msbuild) {
             Write-Host "MSBuild found at $msbuild"
-            Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$msbuild"
+            Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $msbuild)
           } else {
-            Write-Error "MSBuild not found on this runner."
+            Write-Error "MSBuild not found at $msbuild. If you need Visual Studio MSBuild, use a runner with VS installed or a self-hosted runner."
             exit 1
           }
 
-      - name: Install SonarScanner (dotnet)
+      - name: Install SonarScanner (dotnet-sonarscanner)
         shell: powershell
         run: |
-          dotnet tool install --global dotnet-sonarscanner --version 5.12.0 `
-            || dotnet tool update --global dotnet-sonarscanner --version 5.12.0
-          $env:PATH = "$env:USERPROFILE\.dotnet\tools;" + $env:PATH
+          Write-Host "Installing/updating dotnet-sonarscanner global tool..."
+          try {
+            dotnet tool install --global dotnet-sonarscanner --version 5.12.0
+          } catch {
+            Write-Host "Tool install failed, attempting update..."
+            dotnet tool update --global dotnet-sonarscanner --version 5.12.0
+          }
+          # Ensure dotnet tools path is in PATH for subsequent steps
+          $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $dotnetTools })) {
+            $env:PATH = $dotnetTools + ";" + $env:PATH
+          }
+          Write-Host "dotnet-sonarscanner is available."
 
       - name: SonarScanner Begin
         shell: powershell
         run: |
-          dotnet sonarscanner begin `
-            /k:"$env:SONAR_PROJECT_KEY" `
-            /n:"$env:SONAR_PROJECT_NAME" `
-            /d:sonar.host.url="$env:SONAR_HOST_URL" `
-            /d:sonar.login="$env:SONAR_TOKEN"
+          Write-Host "Starting Sonar analysis (begin)..."
+          dotnet sonarscanner begin /k:"$env:SONAR_PROJECT_KEY" /n:"$env:SONAR_PROJECT_NAME" /d:sonar.host.url="$env:SONAR_HOST_URL" /d:sonar.login="$env:SONAR_TOKEN"
 
       - name: Build solution
         shell: powershell
         run: |
+          if (-not $env:MSBUILD_PATH) {
+            Write-Error "MSBUILD_PATH not set; locate step may have failed."
+            exit 1
+          }
+          Write-Host "Building solution using MSBuild: $env:MSBUILD_PATH"
           & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "Build failed"
+            Write-Error "Build failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
           }
 
       - name: SonarScanner End
         shell: powershell
         run: |
+          Write-Host "Ending Sonar analysis (end)..."
           dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "SonarScanner end failed"
+            Write-Error "SonarScanner end failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
           }
 
       - name: Show Sonar URL
         shell: powershell
         run: |
-          Write-Host "Sonar analysis completed."
-          Write-Host "Dashboard: $env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"
+          Write-Host "Sonar analysis submitted (dummy values used in this workflow)."
+          Write-Host "If you use real Sonar settings, open:"
+          Write-Host "$env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"

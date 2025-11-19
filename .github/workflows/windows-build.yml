@@ -18,29 +18,39 @@ jobs:
         uses: nuget/setup-nuget@v1
 
       - name: Restore Packages
+        shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
       - name: Build Solution
-        run: >
-          "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-          "SampleWebApplication.sln"
-          /p:Configuration=Release
+        shell: powershell
+        run: |
+          $msbuild = "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+          if (!(Test-Path $msbuild)) {
+            Write-Error "MSBuild not found at $msbuild"
+            exit 1
+          }
+          & $msbuild "SampleWebApplication.sln" /p:Configuration=Release
 
       - name: Publish Web Project
-        run: >
-          "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-          ".\SampleWebApplication\SampleWebApplication.csproj"
-          /p:Configuration=Release
-          /p:DeployOnBuild=true
-          /p:WebPublishMethod=Package
-          /p:PackageAsSingleFile=false
-          /p:SkipInvalidConfigurations=true
+        shell: powershell
+        run: |
+          $msbuild = "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
+          if (!(Test-Path $msbuild)) {
+            Write-Error "MSBuild not found at $msbuild"
+            exit 1
+          }
+          & $msbuild ".\SampleWebApplication\SampleWebApplication.csproj" `
+            /p:Configuration=Release `
+            /p:DeployOnBuild=true `
+            /p:WebPublishMethod=Package `
+            /p:PackageAsSingleFile=false `
+            /p:SkipInvalidConfigurations=true
 
       - name: Create Artifact ZIP
         shell: powershell
         run: |
           $publishPath = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
-          
+
           if (!(Test-Path $publishPath)) {
             Write-Host "❌ Publish folder not found. Check project path."
             exit 1
@@ -51,8 +61,8 @@ jobs:
 
           robocopy $publishPath publish /E | Out-Null
 
-          if (Test-Path "publish.zip") { Remove-Item "publish.zip" }
-          Compress-Archive -Path publish/* -DestinationPath publish.zip
+          if (Test-Path "publish.zip") { Remove-Item "publish.zip" -Force }
+          Compress-Archive -Path (Join-Path (Get-Item publish).FullName '*') -DestinationPath publish.zip
 
           Write-Host "✅ publish.zip created successfully"
 

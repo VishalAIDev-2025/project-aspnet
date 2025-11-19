@@ -10,16 +10,19 @@ jobs:
   sonar:
     runs-on: windows-latest
 
-    # Dummy values for testing — replace with secrets for real runs
+    # For real runs replace these with repo secrets (set in GitHub Settings -> Secrets)
     env:
-      SONAR_HOST_URL: "http://dummy-sonarqube-url"
-      SONAR_TOKEN: "dummy-token-123456"
-      SONAR_PROJECT_KEY: "dummy-project-key"
-      SONAR_PROJECT_NAME: "Dummy Project"
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'http://dummy-sonarqube-url' }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || 'dummy-token-123456' }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY || 'dummy-project-key' }}
+      SONAR_PROJECT_NAME: ${{ secrets.SONAR_PROJECT_NAME || 'Dummy Project' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup NuGet
+        uses: nuget/setup-nuget@v1
 
       - name: Validate Sonar variables
         shell: powershell
@@ -30,25 +33,38 @@ jobs:
           if (-not $env:SONAR_PROJECT_NAME) { Write-Error "SONAR_PROJECT_NAME missing"; exit 1 }
           Write-Host "Sonar variables validated"
 
-      - name: Setup NuGet
-        uses: nuget/setup-nuget@v1
-
       - name: Restore NuGet packages
         shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
-      - name: Locate MSBuild.exe (use .NET Framework MSBuild)
+      - name: Ensure MSBuild is available (setup-msbuild)
+        uses: microsoft/setup-msbuild@v1
+        # this action exposes MSBUILD_PATH as an output variable
+
+      - name: Export MSBUILD_PATH to environment
         shell: powershell
         run: |
-          $msbuild = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
-          if (Test-Path $msbuild) {
-            Write-Host "MSBuild found at $msbuild"
-            Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $msbuild)
+          if (-not "${{ steps.setup-msbuild.outputs.msbuild-path }}") {
+            Write-Host "setup-msbuild did not return msbuild path; attempting fallback path"
           } else {
-            Write-Error "MSBuild not found at $msbuild. If you need Visual Studio MSBuild, use a runner with VS installed or a self-hosted runner."
-            exit 1
+            Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + "${{ steps.setup-msbuild.outputs.msbuild-path }}")
+            Write-Host "MSBUILD_PATH set to $env:MSBUILD_PATH"
           }
+        # save the output of the previous action in case it exists
+        id: export-msbuild
+        # NOTE: the action's outputs are referenced in the run step above
 
+      - name: (Workaround) Patch old WebApplication target version in .csproj files
+        shell: powershell
+        run: |
+          # This replaces hard-coded "v11.0" imports with "v16.0" in any csproj under repo.
+          # Prefer fixing the project files in source control for a permanent fix.
+          $files = Get-ChildItem -Path . -Filter *.csproj -Recurse
+          foreach ($f in $files) {
+            (Get-Content $f.FullName) -replace 'Microsoft\\VisualStudio\\v11.0\\WebApplications', 'Microsoft\\VisualStudio\\v16.0\\WebApplications' | Set-Content $f.FullName
+            Write-Host "Patched $($f.FullName)"
+          }
+          Write-Host "Patched csproj imports (v11.0 -> v16.0) where present."
 
       - name: Install SonarScanner (dotnet-sonarscanner)
         shell: powershell
@@ -63,25 +79,25 @@ jobs:
           # Ensure dotnet tools path is in PATH for subsequent steps
           $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
           if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $dotnetTools })) {
-            $env:PATH = $dotnetTools + ";" + $env:PATH
+            Add-Content -Path $env:GITHUB_ENV -Value ("PATH=" + $dotnetTools + ";" + $env:PATH)
           }
           Write-Host "dotnet-sonarscanner is available."
 
- #    - name: SonarScanner Begin
- #      shell: powershell
- #     run: |
- #      Write-Host "Starting Sonar analysis (begin)..."
- #     dotnet sonarscanner begin /k:"$env:SONAR_PROJECT_KEY" /n:"$env:SONAR_PROJECT_NAME" /d:sonar.host.url="$env:SONAR_HOST_URL" /d:sonar.login="$env:SONAR_TOKEN"
-
+      - name: SonarScanner Begin
+        shell: powershell
+        run: |
+          Write-Host "Starting Sonar analysis (begin)..."
+          dotnet sonarscanner begin /k:"$env:SONAR_PROJECT_KEY" /n:"$env:SONAR_PROJECT_NAME" /d:sonar.host.url="$env:SONAR_HOST_URL" /d:sonar.login="$env:SONAR_TOKEN"
+      
       - name: Build solution
         shell: powershell
         run: |
           if (-not $env:MSBUILD_PATH) {
-            Write-Error "MSBUILD_PATH not set; locate step may have failed."
+            Write-Error "MSBUILD_PATH not set; setup-msbuild may have failed."
             exit 1
           }
           Write-Host "Building solution using MSBuild: $env:MSBUILD_PATH"
-          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
+          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release /m /p:VisualStudioVersion=16.0
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Build failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
@@ -98,9 +114,7 @@ jobs:
           }
 
       - name: Show Sonar URL
-      
         shell: powershell
         run: |
-          Write-Host "Sonar analysis submitted (dummy values used in this workflow)."
-          Write-Host "If you use real Sonar settings, open:"
-          Write-Host "$env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"
+          Write-Host "Sonar analysis submitted (if using real Sonar settings)."
+          Write-Host "Open: $env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"

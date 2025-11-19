@@ -22,15 +22,15 @@ jobs:
         run: nuget restore "SampleWebApplication.sln"
 
       - name: Locate MSBuild
-        id: msbuild
+        id: locate-msbuild
         shell: powershell
         run: |
-          # Locate vswhere
+          # Find vswhere.exe if available
           $vswhere = Join-Path $env:ProgramFiles 'Microsoft Visual Studio\Installer\vswhere.exe'
           $msbuildPath = $null
 
           if (Test-Path $vswhere) {
-            Write-Host "Using vswhere to locate Visual Studio installation..."
+            Write-Host "Using vswhere to locate Visual Studio..."
             $installPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
             if ($installPath) {
               $candidate = Join-Path $installPath 'MSBuild\Current\Bin\MSBuild.exe'
@@ -39,7 +39,7 @@ jobs:
           }
 
           if (-not $msbuildPath) {
-            Write-Host "vswhere not usable or not found — trying common fallback paths..."
+            Write-Host "vswhere not found or did not return a path — trying fallback paths..."
             $fallbacks = @(
               'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe',
               'C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe',
@@ -54,48 +54,47 @@ jobs:
 
           if (-not $msbuildPath) {
             Write-Error "MSBuild not found on this runner. Searched vswhere and fallback paths."
-            # Optional debug: list Visual Studio folder contents
-            Write-Host "Debug: listing C:\Program Files\Microsoft Visual Studio"
+            # optional debug: list Visual Studio folder contents
             if (Test-Path 'C:\Program Files\Microsoft Visual Studio') {
+              Write-Host "Debug: listing C:\Program Files\Microsoft Visual Studio"
               Get-ChildItem 'C:\Program Files\Microsoft Visual Studio' -Force | ForEach-Object { Write-Host $_.FullName }
             }
             exit 1
           }
 
           Write-Host "MSBuild found at: $msbuildPath"
-          # Export to GITHUB_ENV so later steps can use $env:MSBUILD_PATH
-          "`"MSBUILD_PATH=$msbuildPath`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # Export to GITHUB_ENV in a reliable way
+          Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$msbuildPath"
 
       - name: Build Solution
         shell: powershell
         run: |
-          Write-Host "Building solution using MSBuild at $env:MSBUILD_PATH"
+          if (-not $env:MSBUILD_PATH) {
+            Write-Error "MSBUILD_PATH is not set. Locate step may have failed."
+            exit 1
+          }
+          Write-Host "Building solution with MSBuild: $env:MSBUILD_PATH"
           & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
 
       - name: Publish Web Project
         shell: powershell
         run: |
-          Write-Host "Creating web package..."
+          Write-Host "Publishing web project using MSBuild..."
           & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=false /p:SkipInvalidConfigurations=true
 
       - name: Create Artifact ZIP
         shell: powershell
         run: |
           $publishSrc = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
-
           if (!(Test-Path $publishSrc)) {
             Write-Host "Publish folder not found: $publishSrc"
             exit 1
           }
-
           if (Test-Path "publish") { Remove-Item "publish" -Recurse -Force }
           New-Item -ItemType Directory -Path publish | Out-Null
-
           robocopy $publishSrc publish /E | Out-Null
-
           if (Test-Path "publish.zip") { Remove-Item "publish.zip" -Force }
           Compress-Archive -Path (Join-Path (Get-Item publish).FullName '*') -DestinationPath publish.zip
-
           Write-Host "publish.zip created successfully"
 
       - name: Upload Artifact

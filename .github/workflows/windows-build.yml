@@ -1,4 +1,4 @@
-name: SonarQube Code Analysis
+name: SonarCloud Analysis
 
 on:
   push:
@@ -9,194 +9,57 @@ on:
 jobs:
   sonar:
     runs-on: windows-latest
+
     env:
-      # For production, replace SONAR_TOKEN with ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: "https://sonarcloud.io"
       SONAR_TOKEN: "25f0b32cdd9160d498bbaa922462f89275769c74"
       SONAR_PROJECT_KEY: "VishalAIDev-2025_project-aspnet"
       SONAR_PROJECT_NAME: "project-aspnet"
-      SONAR_ORGANIZATION: "vishalaidev-2025"
 
     steps:
-      - name: Checkout code
+      # 1. Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Setup NuGet
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
 
-      - name: Ensure MSBuild is available
-        id: setup-msbuild
+      # 3. Setup MSBuild
+      - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v1
+        id: setup-msbuild
 
-      - name: Export MSBUILD_PATH (action output or vswhere fallback)
-        shell: powershell
-        run: |
-          $ms = '${{ steps.setup-msbuild.outputs.msbuild-path }}'
-          if (-not [string]::IsNullOrEmpty($ms)) {
-            Write-Host "Using msbuild path from action output: $ms"
-            Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $ms)
-            exit 0
-          }
-          Write-Host "setup-msbuild did not return msbuild-path; trying vswhere fallback..."
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            $inst = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-            if ($inst) {
-              $candidate = Join-Path $inst "MSBuild\Current\Bin\MSBuild.exe"
-              if (-not (Test-Path $candidate)) {
-                $candidate = Get-ChildItem -Path (Join-Path $inst "MSBuild") -Recurse -Filter "MSBuild.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-              }
-              if ($candidate -and (Test-Path $candidate)) {
-                Write-Host "Found MSBuild via vswhere: $candidate"
-                Add-Content -Path $env:GITHUB_ENV -Value ("MSBUILD_PATH=" + $candidate)
-                exit 0
-              }
-            }
-          }
-          Write-Error "Could not determine MSBuild path."
-          exit 1
-
+      # 4. Restore packages
       - name: Restore NuGet packages
         shell: powershell
         run: nuget restore "SampleWebApplication.sln"
 
-      - name: Download Web.targets package and set VSToolsPath
+      # 5. Install dotnet-sonarscanner manually (Correct way)
+      - name: Install SonarScanner
         shell: powershell
         run: |
-          Write-Host "Downloading MSBuild.Microsoft.VisualStudio.Web.targets..."
-          $pkg = "MSBuild.Microsoft.VisualStudio.Web.targets"
-          $ver = "14.0.0.3"
-          $out = Join-Path $PWD ".nuget-packages"
-          New-Item -Path $out -ItemType Directory -Force | Out-Null
-
-          & nuget install $pkg -Version $ver -OutputDirectory $out
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to download $pkg (exit $LASTEXITCODE)"
-            exit $LASTEXITCODE
-          }
-
-          $pkgFolder = Get-ChildItem -Path $out -Directory | Where-Object { $_.Name -like "$pkg.*" } | Select-Object -First 1
-          if (-not $pkgFolder) {
-            Write-Error "Package folder not found under $out"
-            Get-ChildItem -Path $out -Recurse | ForEach-Object { Write-Host $_.FullName }
-            exit 1
-          }
-
-          # Look for the folder that contains WebApplications\Microsoft.WebApplication.targets
-          $found = $null
-          $candidates = Get-ChildItem -Path $pkgFolder.FullName -Directory -Recurse -ErrorAction SilentlyContinue
-          foreach ($d in $candidates) {
-            $check = Join-Path $d.FullName "WebApplications\Microsoft.WebApplication.targets"
-            if (Test-Path $check) {
-              $found = $d.FullName
-              break
-            }
-          }
-
-          if (-not $found) {
-            Write-Host "Could not find WebApplications\\Microsoft.WebApplication.targets inside the package. Listing structure for debugging:"
-            Get-ChildItem -Path $pkgFolder.FullName -Recurse | ForEach-Object { Write-Host $_.FullName }
-            Write-Error "Microsoft.WebApplication.targets not found in package layout."
-            exit 1
-          }
-
-          Write-Host "Found WebApplication targets folder: $found"
-          Add-Content -Path $env:GITHUB_ENV -Value ("VSToolsPath=" + $found)
-          Write-Host "Exported VSToolsPath=$found"
-
-      - name: Patch .csproj import to use VSToolsPath/MSBuildExtensionsPath32
-        shell: powershell
-        run: |
-          Write-Host "Patching .csproj import(s) to use VSToolsPath or MSBuildExtensionsPath32 (safe conditional imports)..."
-          $files = Get-ChildItem -Path . -Filter *.csproj -Recurse
-          foreach ($f in $files) {
-            $text = Get-Content $f.FullName -Raw
-            # Regex to match an Import that includes Microsoft.WebApplication.targets (absolute or relative)
-            if ($text -match '(<Import\s+Project\s*=\s*".*?Microsoft\.WebApplication\.targets".*?/>)') {
-              Write-Host "  Modifying: $($f.FullName)"
-              # Build the replacement block
-              $replacement = @"
-  <!-- Replaced absolute Microsoft.WebApplication.targets import with conditional imports so CI can provide VSToolsPath -->
-  <Import Project="$(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets" Condition="Exists('$(VSToolsPath)\WebApplications\Microsoft.WebApplication.targets')" />
-  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\WebApplications\Microsoft.WebApplication.targets" Condition="Exists('$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\WebApplications\Microsoft.WebApplication.targets')" />
-"@ -replace "`r`n", [Environment]::NewLine
-              # Replace the first occurrence of an Import that contains Microsoft.WebApplication.targets
-              $new = [System.Text.RegularExpressions.Regex]::Replace($text, '<Import\s+Project\s*=\s*".*?Microsoft\.WebApplication\.targets".*?/>', [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $replacement }, 1, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-              $new | Set-Content $f.FullName
-            }
-          }
-          Write-Host "Patch completed."
-
-      - name: Verify VSToolsPath and targets file
-        shell: powershell
-        run: |
-          Write-Host "VSToolsPath: $env:VSToolsPath"
-          if (-not $env:VSToolsPath) {
-            Write-Error "VSToolsPath not set; earlier step must have failed."
-            exit 1
-          }
-          $check = Join-Path $env:VSToolsPath "WebApplications\Microsoft.WebApplication.targets"
-          if (Test-Path $check) {
-            Write-Host "OK: Found targets at: $check"
-          } else {
-            Write-Error "Microsoft.WebApplication.targets not found at: $check"
-            Get-ChildItem -Path $env:VSToolsPath -Recurse | ForEach-Object { Write-Host $_.FullName }
-            exit 1
-          }
-
-      - name: Install dotnet-sonarscanner
-        shell: powershell
-        run: |
-          Write-Host "Installing/updating dotnet-sonarscanner..."
           dotnet tool install --global dotnet-sonarscanner --version 5.12.0
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Install failed; trying update..."
-            dotnet tool update --global dotnet-sonarscanner --version 5.12.0
-            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to install/update dotnet-sonarscanner"; exit $LASTEXITCODE }
-          }
-          $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
-          Add-Content -Path $env:GITHUB_ENV -Value ("PATH=" + $dotnetTools + ";" + $env:PATH)
-          Write-Host "dotnet-sonarscanner available at $dotnetTools"
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
 
+      # 6. Sonar Begin
       - name: SonarScanner Begin
         shell: powershell
         run: |
-          if (-not $env:SONAR_TOKEN -or -not $env:SONAR_HOST_URL -or -not $env:SONAR_PROJECT_KEY -or -not $env:SONAR_PROJECT_NAME -or -not $env:SONAR_ORGANIZATION) {
-            Write-Error "Missing Sonar env vars. Please set SONAR_HOST_URL, SONAR_TOKEN, SONAR_PROJECT_KEY, SONAR_PROJECT_NAME, SONAR_ORGANIZATION."
-            exit 1
-          }
-          Write-Host "Starting Sonar analysis (begin)..."
           dotnet sonarscanner begin `
             /k:"$env:SONAR_PROJECT_KEY" `
             /n:"$env:SONAR_PROJECT_NAME" `
-            /o:"$env:SONAR_ORGANIZATION" `
+            /o:"vishalaidev-2025" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
             /d:sonar.login="$env:SONAR_TOKEN"
-          if ($LASTEXITCODE -ne 0) { Write-Error "SonarScanner begin failed."; exit $LASTEXITCODE }
 
-      - name: Build solution (pass VSToolsPath explicitly)
+      # 7. Build solution
+      - name: Build Solution
         shell: powershell
         run: |
-          if (-not $env:MSBUILD_PATH) {
-            Write-Error "MSBUILD_PATH not set; cannot build."
-            exit 1
-          }
-          Write-Host "MSBUILD_PATH = $env:MSBUILD_PATH"
-          Write-Host "VSToolsPath = $env:VSToolsPath"
-          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release /m /p:VisualStudioVersion=17.0 /p:VSToolsPath="$env:VSToolsPath"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "MSBuild failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
-          }
+          & "${{ steps.setup-msbuild.outputs.msbuild-path }}" "SampleWebApplication.sln" /p:Configuration=Release
 
+      # 8. Sonar End
       - name: SonarScanner End
         shell: powershell
-        run: |
-          Write-Host "Ending Sonar analysis..."
-          dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
-          if ($LASTEXITCODE -ne 0) { Write-Error "SonarScanner end failed"; exit $LASTEXITCODE }
-
-      - name: Show Sonar URL
-        shell: powershell
-        run: |
-          Write-Host "SonarCloud Dashboard: https://sonarcloud.io/project/overview?id=$env:SONAR_PROJECT_KEY"
+        run: dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"

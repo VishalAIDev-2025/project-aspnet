@@ -11,10 +11,10 @@ jobs:
     runs-on: windows-latest
     env:
       # Sonar secrets should be set in repo secrets for real runs
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'http://dummy-sonarqube-url' }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || 'dummy-token-123456' }}
-      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY || 'dummy-project-key' }}
-      SONAR_PROJECT_NAME: ${{ secrets.SONAR_PROJECT_NAME || 'Dummy Project' }}
+     SONAR_HOST_URL: "https://sonarcloud.io"
+     SONAR_TOKEN: "25f0b32cdd9160d498bbaa922462f89275769c74"
+     SONAR_PROJECT_KEY: "VishalAIDev-2025_project-aspnet"
+     SONAR_PROJECT_NAME: "project-aspnet"
 
     steps:
       - name: Checkout code

@@ -10,7 +10,6 @@ jobs:
   sonar:
     runs-on: windows-latest
 
-    # Dummy values so workflow runs
     env:
       SONAR_HOST_URL: "http://dummy-sonarqube-url"
       SONAR_TOKEN: "dummy-token-123456"
@@ -28,7 +27,7 @@ jobs:
           if (-not $env:SONAR_TOKEN) { Write-Error "SONAR_TOKEN missing"; exit 1 }
           if (-not $env:SONAR_PROJECT_KEY) { Write-Error "SONAR_PROJECT_KEY missing"; exit 1 }
           if (-not $env:SONAR_PROJECT_NAME) { Write-Error "SONAR_PROJECT_NAME missing"; exit 1 }
-          Write-Host "Sonar variables validated"
+          Write-Host "Sonar variables are valid."
 
       - name: Setup NuGet
         uses: nuget/setup-nuget@v1
@@ -40,30 +39,52 @@ jobs:
       - name: Locate MSBuild.exe
         shell: powershell
         run: |
-          Write-Host "Locating MSBuild..."
-          $vswhere = "$env:ProgramFiles\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
 
-          if (Test-Path $vswhere) {
-            $install = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
-
-            if ($install) {
-              $msbuild = Join-Path $install "MSBuild\Current\Bin\MSBuild.exe"
-              if (Test-Path $msbuild) {
-                Write-Host "MSBuild found at $msbuild"
-                Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$msbuild"
-                exit 0
-              }
-            }
+          if (Test-Path $msbuild) {
+            Write-Host "MSBuild found at $msbuild"
+            Add-Content -Path $env:GITHUB_ENV -Value "MSBUILD_PATH=$msbuild"
+          } else {
+            Write-Error "MSBuild not found on this runner."
+            exit 1
           }
-
-          Write-Error "MSBuild not found"
-          exit 1
 
       - name: Install SonarScanner (dotnet)
         shell: powershell
         run: |
           dotnet tool install --global dotnet-sonarscanner --version 5.12.0 `
             || dotnet tool update --global dotnet-sonarscanner --version 5.12.0
-
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;" + $env:PATH
-          Write-Host "SonarScanner installed"
+
+      - name: SonarScanner Begin
+        shell: powershell
+        run: |
+          dotnet sonarscanner begin `
+            /k:"$env:SONAR_PROJECT_KEY" `
+            /n:"$env:SONAR_PROJECT_NAME" `
+            /d:sonar.host.url="$env:SONAR_HOST_URL" `
+            /d:sonar.login="$env:SONAR_TOKEN"
+
+      - name: Build solution
+        shell: powershell
+        run: |
+          & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Build failed"
+            exit $LASTEXITCODE
+          }
+
+      - name: SonarScanner End
+        shell: powershell
+        run: |
+          dotnet sonarscanner end /d:sonar.login="$env:SONAR_TOKEN"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "SonarScanner end failed"
+            exit $LASTEXITCODE
+          }
+
+      - name: Show Sonar URL
+        shell: powershell
+        run: |
+          Write-Host "Sonar analysis completed."
+          Write-Host "Dashboard: $env:SONAR_HOST_URL/dashboard?id=$env:SONAR_PROJECT_KEY"

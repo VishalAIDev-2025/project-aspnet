@@ -10,11 +10,12 @@ jobs:
   sonar:
     runs-on: windows-latest
 
+    # Dummy SonarQube values for testing ONLY
     env:
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-      SONAR_PROJECT_NAME: ${{ secrets.SONAR_PROJECT_NAME }}
+      SONAR_HOST_URL: "http://dummy-sonarqube-url"
+      SONAR_TOKEN: "dummy-token-123456"
+      SONAR_PROJECT_KEY: "dummy-project-key"
+      SONAR_PROJECT_NAME: "Dummy Project Name"
 
     steps:
       - name: Checkout code
@@ -63,6 +64,7 @@ jobs:
         run: |
           dotnet tool install --global dotnet-sonarscanner --version 5.12.0 `
             || dotnet tool update --global dotnet-sonarscanner --version 5.12.0
+
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;" + $env:PATH
           Write-Host "✔ SonarScanner installed"
 

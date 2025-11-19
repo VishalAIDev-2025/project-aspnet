@@ -9,8 +9,8 @@
     <ProductVersion>
     </ProductVersion>
     <SchemaVersion>2.0</SchemaVersion>
-    <ProjectGuid>{{7F8BAE5D-C640-4854-90DE-A0E5AFE28C61}}</ProjectGuid>
-    <ProjectTypeGuids>{{349c5851-65df-11da-9384-00065b846f21}};{{fae04ec0-301f-11d3-bf4b-00c04f79efbc}}</ProjectTypeGuids>
+    <ProjectGuid>{{{{7F8BAE5D-C640-4854-90DE-A0E5AFE28C61}}}}</ProjectGuid>
+    <ProjectTypeGuids>{{{{349c5851-65df-11da-9384-00065b846f21}}}};{{{{fae04ec0-301f-11d3-bf4b-00c04f79efbc}}}}</ProjectTypeGuids>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>SampleWebApplication</RootNamespace>
@@ -67,4 +67,4 @@
     <Reference Include="System.EnterpriseServices" />
     <Reference Include="Microsoft.Web.Infrastructure, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <Private>True</Private>
-      <HintPath>..\packages\Microsoft.Web.Infrastructure.1.0.0.0
+      <HintPath>..\packages\Microsoft.Web.Infrastructure.1.0.

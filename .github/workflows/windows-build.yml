@@ -9,7 +9,6 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -26,27 +25,17 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Locating MSBuild..."
-
           $msbuild = $null
-
-          # 1) Try vswhere if present
           $vswherePath = Join-Path $env:ProgramFiles 'Microsoft Visual Studio\Installer\vswhere.exe'
           if (Test-Path $vswherePath) {
-            Write-Host "vswhere found at $vswherePath - attempting to locate Visual Studio installation..."
             try {
               $installPath = & $vswherePath -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null
               if ($installPath) {
                 $candidate = Join-Path $installPath 'MSBuild\Current\Bin\MSBuild.exe'
                 if (Test-Path $candidate) { $msbuild = $candidate }
               }
-            } catch {
-              Write-Host "vswhere invocation failed or returned nothing."
-            }
-          } else {
-            Write-Host "vswhere not present on runner."
+            } catch { Write-Host "vswhere failed" }
           }
-
-          # 2) If not found, search common directories for MSBuild.exe (recursively)
           if (-not $msbuild) {
             $searchRoots = @(
               'C:\Program Files\Microsoft Visual Studio',
@@ -56,23 +45,11 @@ jobs:
             )
             foreach ($root in $searchRoots) {
               if (Test-Path $root) {
-                Write-Host "Searching under $root for MSBuild.exe (this may take a few seconds)..."
-                try {
-                  $found = Get-ChildItem -Path $root -Filter MSBuild.exe -Recurse -ErrorAction SilentlyContinue -Force | Select-Object -First 1
-                  if ($found -and $found.FullName) {
-                    $msbuild = $found.FullName
-                    break
-                  }
-                } catch {
-                  Write-Host "Search under $root failed or was skipped."
-                }
-              } else {
-                Write-Host "Path not present: $root"
+                $found = Get-ChildItem -Path $root -Filter MSBuild.exe -Recurse -ErrorAction SilentlyContinue -Force | Select-Object -First 1
+                if ($found -and $found.FullName) { $msbuild = $found.FullName; break }
               }
             }
           }
-
-          # 3) Final fallback: check a few very common specific locations
           if (-not $msbuild) {
             $fallbacks = @(
               'C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe',
@@ -80,63 +57,83 @@ jobs:
               'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe',
               'C:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe'
             )
-            foreach ($f in $fallbacks) {
-              if (Test-Path $f) { $msbuild = $f; break }
-            }
+            foreach ($f in $fallbacks) { if (Test-Path $f) { $msbuild = $f; break } }
           }
-
-          # If still not found, show helpful debug info and fail
           if (-not $msbuild) {
             Write-Host "ERROR: MSBuild.exe not found on this runner."
-            Write-Host "Debug: listing top-level Visual Studio folders (if present):"
-            if (Test-Path 'C:\Program Files\Microsoft Visual Studio') {
-              Get-ChildItem 'C:\Program Files\Microsoft Visual Studio' -Force | ForEach-Object { Write-Host $_.FullName }
-            } else {
-              Write-Host "C:\Program Files\Microsoft Visual Studio does not exist on this runner."
-            }
-            Write-Host "You can switch to a self-hosted runner with Visual Studio installed or use a different hosted image."
             exit 1
           }
-
           Write-Host "MSBuild found at: $msbuild"
-
-          # Export to GITHUB_ENV safely (no fragile quoting)
           Add-Content -Path $env:GITHUB_ENV -Value ('MSBUILD_PATH=' + $msbuild)
 
       - name: Build Solution
         shell: powershell
         run: |
-          if (-not $env:MSBUILD_PATH) {
-            Write-Host "MSBUILD_PATH is not set - aborting."
-            exit 1
-          }
-          Write-Host "Building solution with: $env:MSBUILD_PATH"
+          Write-Host "Building solution..."
           & "$env:MSBUILD_PATH" "SampleWebApplication.sln" /p:Configuration=Release
 
-      - name: Publish Web Project
+      - name: Try Package Publish (creates PackageTmp)
         shell: powershell
         run: |
-          Write-Host "Publishing web project..."
+          Write-Host "Attempting MSBuild Package publish (PackageTmp)..."
           & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=false /p:SkipInvalidConfigurations=true
+          Write-Host "Package publish step finished. (Check logs above for errors/warnings.)"
+
+      - name: Ensure publish output (fallback to FileSystem publish if PackageTmp missing)
+        shell: powershell
+        run: |
+          $packageTmp = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
+          $publishDir = "publish"
+
+          if (Test-Path $packageTmp) {
+            Write-Host "Found PackageTmp at $packageTmp - using it as publish source."
+            if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+            New-Item -ItemType Directory -Path $publishDir | Out-Null
+            robocopy $packageTmp $publishDir /E | Out-Null
+          } else {
+            Write-Host "PackageTmp not found. Attempting FileSystem publish directly to '$publishDir' using MSBuild..."
+            # Remove old publish folder
+            if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+            # Try FileSystem publish
+            & "$env:MSBUILD_PATH" ".\SampleWebApplication\SampleWebApplication.csproj" /p:Configuration=Release /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:publishUrl=$publishDir /p:SkipInvalidConfigurations=true
+            if (Test-Path $publishDir) {
+              Write-Host "FileSystem publish succeeded; publish folder created at $publishDir"
+            } else {
+              Write-Host "FileSystem publish did not create $publishDir. Falling back to copying bin and content if available..."
+              # Fallback copy: copy bin\Release and web content folders into publish
+              $binDir = ".\SampleWebApplication\bin\Release"
+              if (Test-Path $binDir) {
+                New-Item -ItemType Directory -Path $publishDir | Out-Null
+                robocopy $binDir (Join-Path $publishDir "bin") /E | Out-Null
+              }
+              # Copy common folders (Views, Content, Scripts, etc.) if they exist
+              $commonFolders = @("Views","Content","Scripts","assets","App_Data","fonts")
+              foreach ($f in $commonFolders) {
+                $src = Join-Path ".\SampleWebApplication" $f
+                if (Test-Path $src) {
+                  robocopy $src (Join-Path $publishDir $f) /E | Out-Null
+                }
+              }
+            }
+          }
+
+          # Final check
+          if (!(Test-Path $publishDir) -or ((Get-ChildItem $publishDir -Recurse | Measure-Object).Count -eq 0)) {
+            Write-Host "ERROR: No publish output found after all attempts."
+            Write-Host "Debug listing of SampleWebApplication folders:"
+            Get-ChildItem ".\SampleWebApplication" -Force -Recurse -Depth 2 | ForEach-Object { Write-Host $_.FullName }
+            exit 1
+          } else {
+            Write-Host "Publish files ready in folder: $publishDir"
+            Get-ChildItem $publishDir -Recurse | Select-Object FullName, Length | ForEach-Object { Write-Host $_.FullName }
+          }
 
       - name: Create Artifact ZIP
         shell: powershell
         run: |
-          $publishSrc = ".\SampleWebApplication\obj\Release\Package\PackageTmp"
-          if (!(Test-Path $publishSrc)) {
-            Write-Host "Publish output not found at $publishSrc. Build/publish may have failed."
-            exit 1
-          }
-
-          if (Test-Path "publish") { Remove-Item "publish" -Recurse -Force }
-          New-Item -ItemType Directory -Path publish | Out-Null
-
-          robocopy $publishSrc publish /E | Out-Null
-
           if (Test-Path "publish.zip") { Remove-Item "publish.zip" -Force }
           Compress-Archive -Path (Join-Path (Get-Item publish).FullName '*') -DestinationPath publish.zip
-
-          Write-Host "publish.zip created successfully"
+          Write-Host "publish.zip created."
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

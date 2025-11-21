@@ -42,19 +42,32 @@ jobs:
           dotnet tool install --global dotnet-sonarscanner --version 5.12.0
           $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
 
-      # 5. SonarScanner Begin
-      - name: SonarScanner Begin
+      # 5A. Sonar Begin for PR events
+      - name: SonarScanner Begin (PR)
+        if: ${{ github.event_name == 'pull_request' }}
         shell: powershell
         run: |
           dotnet sonarscanner begin `
             /k:"$env:SONAR_PROJECT_KEY" `
             /n:"$env:SONAR_PROJECT_NAME" `
-            /o:"vishalaidev-2025" `
+            /o:"$env:SONAR_ORG" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
             /d:sonar.login="$env:SONAR_TOKEN" `
             /d:sonar.pullrequest.key="${{ github.event.pull_request.number }}" `
             /d:sonar.pullrequest.branch="${{ github.head_ref }}" `
             /d:sonar.pullrequest.base="${{ github.base_ref }}"
+
+      # 5B. Sonar Begin for PUSH (normal branch builds)
+      - name: SonarScanner Begin (Push)
+        if: ${{ github.event_name != 'pull_request' }}
+        shell: powershell
+        run: |
+          dotnet sonarscanner begin `
+            /k:"$env:SONAR_PROJECT_KEY" `
+            /n:"$env:SONAR_PROJECT_NAME" `
+            /o:"$env:SONAR_ORG" `
+            /d:sonar.host.url="$env:SONAR_HOST_URL" `
+            /d:sonar.login="$env:SONAR_TOKEN"    
 
       # 6. Build Solution (Fixed — using static MSBuild path)
       - name: Build Solution

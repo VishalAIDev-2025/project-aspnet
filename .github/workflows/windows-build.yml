@@ -53,7 +53,7 @@ jobs:
             /o:"$env:SONAR_ORG" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
             /d:sonar.login= "vishalaidev-2025" `
-            /d:sonar.pullrequest.key="${{ github.event.pull_request.number }}" `
+            /d:sonar.pullrequest.key="${{ github.event.pull_request.number || github.event.pull_request.number }}" `
             /d:sonar.pullrequest.branch="${{ github.head_ref }}" `
             /d:sonar.pullrequest.base="main"
 

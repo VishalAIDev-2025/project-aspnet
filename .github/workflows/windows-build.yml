@@ -50,9 +50,9 @@ jobs:
           dotnet sonarscanner begin `
             /k:"$env:SONAR_PROJECT_KEY" `
             /n:"$env:SONAR_PROJECT_NAME" `
-            /o:"$env:SONAR_ORG" `
+            /o:"vishalaidev-2025" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
-            /d:sonar.login= "vishalaidev-2025" `
+            /d:sonar.login="$env:SONAR_TOKEN" `
             /d:sonar.pullrequest.key="${{ github.event.pull_request.number || github.event.pull_request.number }}" `
             /d:sonar.pullrequest.branch="${{ github.head_ref }}" `
             /d:sonar.pullrequest.base="main"

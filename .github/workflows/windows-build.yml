@@ -52,6 +52,9 @@ jobs:
             /o:"vishalaidev-2025" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
             /d:sonar.login="$env:SONAR_TOKEN"
+            /d:sonar.pullrequest.key="${{ github.event.pull_request.number }}" `
+            /d:sonar.pullrequest.branch="${{ github.head_ref }}" `
+            /d:sonar.pullrequest.base="${{ github.base_ref }}"
 
       # 6. Build Solution (Fixed — using static MSBuild path)
       - name: Build Solution

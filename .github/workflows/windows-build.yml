@@ -51,7 +51,7 @@ jobs:
             /n:"$env:SONAR_PROJECT_NAME" `
             /o:"vishalaidev-2025" `
             /d:sonar.host.url="$env:SONAR_HOST_URL" `
-            /d:sonar.login="$env:SONAR_TOKEN"
+            /d:sonar.login="$env:SONAR_TOKEN" `
             /d:sonar.pullrequest.key="${{ github.event.pull_request.number }}" `
             /d:sonar.pullrequest.branch="${{ github.head_ref }}" `
             /d:sonar.pullrequest.base="${{ github.base_ref }}"

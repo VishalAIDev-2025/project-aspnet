@@ -31,7 +31,9 @@ jobs:
       # 3. Restore packages
       - name: Restore NuGet packages
         shell: powershell
-        run: nuget restore "SampleWebApplication.sln"
+        run: |
+         mkdir packages
+         nuget restore "SampleWebApplication.sln" -PackagesDirectory packages
 
       # 4. Install SonarScanner
       - name: Install SonarScanner

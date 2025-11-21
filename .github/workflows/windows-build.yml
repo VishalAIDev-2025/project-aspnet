@@ -55,7 +55,7 @@ jobs:
             /d:sonar.login= "vishalaidev-2025" `
             /d:sonar.pullrequest.key="${{ github.event.pull_request.number }}" `
             /d:sonar.pullrequest.branch="${{ github.head_ref }}" `
-            /d:sonar.pullrequest.base="${{ github.base_ref }}"
+            /d:sonar.pullrequest.base="main"
 
       # 5B. Sonar Begin for PUSH (normal branch builds)
       - name: SonarScanner Begin (Push)
